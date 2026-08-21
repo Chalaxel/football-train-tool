@@ -2,9 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type Konva from 'konva'
 import { v4 as uuidv4 } from 'uuid'
 import { FieldCanvas } from './components/FieldCanvas'
-import { FieldSettings } from './components/FieldSettings'
-import { ElementPalette } from './components/ElementPalette'
-import { Toolbar } from './components/Toolbar'
+import { TopToolbar } from './components/TopToolbar'
 import type { AppState, ElementType, FieldElement, FieldPreset, Team } from './types'
 import { presetToConfig } from './utils/fieldDimensions'
 import { downloadDataUrl, stageToPng } from './utils/exportImage'
@@ -46,7 +44,7 @@ function App() {
   const [customWidth, setCustomWidth] = useState(40)
   const [customHeight, setCustomHeight] = useState(30)
   const [elements, setElements] = useState<FieldElement[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [activeTool, setActiveTool] = useState<ElementType | 'select'>('select')
   const [team, setTeam] = useState<Team>('home')
   const [showGrid, setShowGrid] = useState(false)
@@ -54,6 +52,8 @@ function App() {
 
   const field = presetToConfig(fieldPreset, { widthM: customWidth, heightM: customHeight })
   const readonly = embedParams.readonly
+  const selectedElement =
+    selectedIds.length === 1 ? (elements.find((el) => el.id === selectedIds[0]) ?? null) : null
 
   const showToast = useCallback((msg: string) => {
     setToast(msg)
@@ -69,7 +69,7 @@ function App() {
       setCustomHeight(state.field.heightM)
     }
     setElements(state.elements)
-    setSelectedId(null)
+    setSelectedIds([])
   }, [])
 
   useEffect(() => {
@@ -99,25 +99,62 @@ function App() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (readonly) return
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
-        setElements((prev) => prev.filter((el) => el.id !== selectedId))
-        setSelectedId(null)
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
+
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
+        setElements((prev) => prev.filter((el) => !selectedIds.includes(el.id)))
+        setSelectedIds([])
+        return
+      }
+
+      if (selectedElement?.type === 'arrow' && (e.key === 'r' || e.key === 'R')) {
+        e.preventDefault()
+        const delta = e.shiftKey ? -15 : 15
+        const id = selectedElement.id
+        setElements((prev) =>
+          prev.map((el) =>
+            el.id === id ? { ...el, rotation: (el.rotation + delta + 360) % 360 } : el,
+          ),
+        )
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [readonly, selectedId])
+  }, [readonly, selectedIds, selectedElement])
 
   const handleAddElement = (type: ElementType, x: number, y: number) => {
     const playerCount = elements.filter((e) => e.type === 'player' && e.team === team).length
     const el = createElement(type, x, y, team, playerCount)
     setElements((prev) => [...prev, el])
-    setSelectedId(el.id)
-    setActiveTool('select')
+    setSelectedIds([el.id])
   }
 
   const handleMoveElement = (id: string, x: number, y: number) => {
     setElements((prev) => prev.map((el) => (el.id === id ? { ...el, x, y } : el)))
+  }
+
+  const handleMoveElements = (updates: Array<{ id: string; x: number; y: number }>) => {
+    const byId = new Map(updates.map((u) => [u.id, u]))
+    setElements((prev) =>
+      prev.map((el) => {
+        const update = byId.get(el.id)
+        return update ? { ...el, x: update.x, y: update.y } : el
+      }),
+    )
+  }
+
+  const handleRotateElement = (id: string, rotation: number) => {
+    setElements((prev) => prev.map((el) => (el.id === id ? { ...el, rotation } : el)))
+  }
+
+  const handleRotateDelta = (delta: number) => {
+    if (!selectedElement || selectedElement.type !== 'arrow') return
+    setElements((prev) =>
+      prev.map((el) =>
+        el.id === selectedElement.id ? { ...el, rotation: (el.rotation + delta + 360) % 360 } : el,
+      ),
+    )
   }
 
   const handleExport = () => {
@@ -129,83 +166,60 @@ function App() {
     postToParent({ source: IFRAME_MESSAGE_SOURCE, type: 'ftt:export', payload: dataUrl })
   }
 
-  const handleCopyEmbed = async () => {
-    const url = `${window.location.origin}${import.meta.env.BASE_URL}?embed=1`
-    const code = `<iframe src="${url}" width="960" height="720" frameborder="0" allow="clipboard-write" title="Créateur de séance foot"></iframe>`
-    await navigator.clipboard.writeText(code)
-    showToast('Code iframe copié')
-  }
-
   const handlePresetChange = (preset: FieldPreset) => {
     setFieldPreset(preset)
     setElements([])
-    setSelectedId(null)
+    setSelectedIds([])
   }
 
   return (
-    <div className={`app ${embedParams.embed ? 'embed' : ''}`}>
-      {!embedParams.embed && (
-        <header className="app-header">
-          <div>
-            <h1>Football Train Tool</h1>
-            <p>Créateur de visuel de séance — vue 2D du dessus</p>
-          </div>
-        </header>
-      )}
+    <div className="app">
+      <TopToolbar
+        readonly={readonly}
+        activeTool={activeTool}
+        team={team}
+        fieldPreset={fieldPreset}
+        customWidth={customWidth}
+        customHeight={customHeight}
+        showGrid={showGrid}
+        selectedElement={selectedElement}
+        selectedCount={selectedIds.length}
+        onToolChange={setActiveTool}
+        onTeamChange={setTeam}
+        onPresetChange={handlePresetChange}
+        onCustomChange={(w, h) => {
+          setCustomWidth(w)
+          setCustomHeight(h)
+        }}
+        onToggleGrid={() => setShowGrid((v) => !v)}
+        onExport={handleExport}
+        onDelete={() => {
+          if (selectedIds.length === 0) return
+          setElements((prev) => prev.filter((e) => !selectedIds.includes(e.id)))
+          setSelectedIds([])
+        }}
+        onClear={() => {
+          setElements([])
+          setSelectedIds([])
+        }}
+        onRotate={handleRotateDelta}
+      />
 
-      <main className="app-layout">
-        <aside className="sidebar">
-          <FieldSettings
-            preset={fieldPreset}
-            customWidth={customWidth}
-            customHeight={customHeight}
-            readonly={readonly}
-            onPresetChange={handlePresetChange}
-            onCustomChange={(w, h) => {
-              setCustomWidth(w)
-              setCustomHeight(h)
-            }}
-          />
-          <ElementPalette
-            activeTool={activeTool}
-            team={team}
-            readonly={readonly}
-            onToolChange={setActiveTool}
-            onTeamChange={setTeam}
-          />
-          <Toolbar
-            readonly={readonly}
-            showGrid={showGrid}
-            selectedCount={selectedId ? 1 : 0}
-            onDelete={() => {
-              if (!selectedId) return
-              setElements((prev) => prev.filter((e) => e.id !== selectedId))
-              setSelectedId(null)
-            }}
-            onClear={() => {
-              setElements([])
-              setSelectedId(null)
-            }}
-            onExport={handleExport}
-            onToggleGrid={() => setShowGrid((v) => !v)}
-            onCopyEmbedCode={handleCopyEmbed}
-          />
-        </aside>
-
-        <section className="canvas-area">
-          <FieldCanvas
-            field={field}
-            elements={elements}
-            selectedId={selectedId}
-            activeTool={activeTool}
-            readonly={readonly}
-            showGrid={showGrid}
-            onSelect={setSelectedId}
-            onAddElement={handleAddElement}
-            onMoveElement={handleMoveElement}
-            stageRef={stageRef}
-          />
-        </section>
+      <main className="canvas-area">
+        <FieldCanvas
+          field={field}
+          elements={elements}
+          selectedIds={selectedIds}
+          activeTool={activeTool}
+          readonly={readonly}
+          showGrid={showGrid}
+          onSelectIds={setSelectedIds}
+          onAddElement={handleAddElement}
+          onMoveElement={handleMoveElement}
+          onMoveElements={handleMoveElements}
+          onRotateElement={handleRotateElement}
+          stageRef={stageRef}
+        />
       </main>
 
       {toast && <div className="toast">{toast}</div>}

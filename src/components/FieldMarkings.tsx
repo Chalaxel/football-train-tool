@@ -1,7 +1,7 @@
 import { useMemo, type ReactElement } from 'react'
-import { Line, Circle, Rect, Group } from 'react-konva'
+import { Line, Circle, Rect, Group, Arc } from 'react-konva'
 import type { FieldConfig } from '../types'
-import { MARKINGS } from '../utils/fieldDimensions'
+import { pitchTransform, scaledMarkings } from '../utils/fieldDimensions'
 
 interface FieldMarkingsProps {
   field: FieldConfig
@@ -9,161 +9,230 @@ interface FieldMarkingsProps {
   height: number
 }
 
-function metersToPx(meters: number, fieldM: number, px: number): number {
-  return (meters / fieldM) * px
+const LINE_COLOR = 'rgba(255,255,255,0.9)'
+const LINE_WIDTH = 2
+const STRIPE_COUNT = 14
+
+function rectOutlinePx(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  toPx: (x: number, y: number) => readonly [number, number],
+): number[] {
+  const [a, b] = toPx(x1, y1)
+  const [c, d] = toPx(x2, y1)
+  const [e, f] = toPx(x2, y2)
+  const [g, h] = toPx(x1, y2)
+  return [a, b, c, d, e, f, g, h, a, b]
+}
+
+function cornerArc(
+  cornerX: number,
+  cornerY: number,
+  r: number,
+  toPx: (x: number, y: number) => readonly [number, number],
+  spanLength: (m: number) => number,
+): ReactElement {
+  const [cx, cy] = toPx(cornerX, cornerY)
+  const radius = spanLength(r)
+  let rotation = 0
+  if (cornerX === 0 && cornerY === 0) rotation = 0
+  else if (cornerY === 0) rotation = 90
+  else if (cornerX > 0 && cornerY > 0) rotation = 180
+  else rotation = 270
+
+  return (
+    <Arc
+      key={`corner-${cornerX}-${cornerY}`}
+      x={cx}
+      y={cy}
+      innerRadius={radius}
+      outerRadius={radius}
+      angle={90}
+      rotation={rotation}
+      stroke={LINE_COLOR}
+      strokeWidth={LINE_WIDTH}
+    />
+  )
+}
+
+function penaltyArc(
+  side: 'left' | 'right',
+  spotX: number,
+  spotY: number,
+  penDepth: number,
+  arcRadius: number,
+  lengthM: number,
+  toPx: (x: number, y: number) => readonly [number, number],
+  spanLength: (m: number) => number,
+): ReactElement {
+  const [cx, cy] = toPx(spotX, spotY)
+  const r = spanLength(arcRadius)
+  const dx = side === 'left' ? penDepth - spotX : spotX - (lengthM - penDepth)
+  const halfAngle = Math.acos(Math.min(1, Math.max(-1, dx / arcRadius)))
+  const halfDeg = (halfAngle * 180) / Math.PI
+  const rotation = side === 'left' ? -halfDeg : 180 - halfDeg
+
+  return (
+    <Arc
+      key={`pen-arc-${side}`}
+      x={cx}
+      y={cy}
+      innerRadius={r}
+      outerRadius={r}
+      angle={2 * halfDeg}
+      rotation={rotation}
+      stroke={LINE_COLOR}
+      strokeWidth={LINE_WIDTH}
+    />
+  )
 }
 
 export function FieldMarkings({ field, width, height }: FieldMarkingsProps) {
   const isHalf = field.preset === 'half'
+  const isCustom = field.preset === 'custom'
+  const m = scaledMarkings(field)
+  const tf = useMemo(() => pitchTransform(field, width, height), [field, width, height])
+  const { lengthM, widthM, toPx, spanLength, spanWidth } = tf
+
   const lines = useMemo(() => {
-    const result: Array<{ points: number[]; dash?: number[] }> = []
-    const W = field.widthM
-    const H = field.heightM
+    if (isCustom) return []
 
-    const mx = (x: number) => (x / W) * width
-    const my = (y: number) => (y / H) * height
+    const result: number[][] = []
 
-    // Outer boundary
-    result.push({ points: [0, 0, width, 0, width, height, 0, height, 0, 0] })
+    // Outer boundary — same frame as green background
+    result.push([0, 0, width, 0, width, height, 0, height, 0, 0])
 
+    // Halfway line (vertical, full pitch)
     if (!isHalf) {
-      // Halfway line
-      result.push({ points: [mx(W / 2), 0, mx(W / 2), height] })
+      const [mx] = toPx(lengthM / 2, 0)
+      result.push([mx, 0, mx, height])
     }
 
-    // Goals at top and bottom (only bottom for half field emphasis, both for full)
-    const goals = isHalf ? ['bottom'] : ['top', 'bottom']
+    const sides: Array<'left' | 'right'> = isHalf ? ['right'] : ['left', 'right']
 
-    for (const side of goals) {
-      const goalY = side === 'top' ? 0 : H
-      const dir = side === 'top' ? 1 : -1
+    for (const side of sides) {
+      const along1 = side === 'left' ? 0 : lengthM - m.penaltyDepth
+      const along2 = side === 'left' ? m.penaltyDepth : lengthM
+      const across1 = (widthM - m.penaltyWidth) / 2
+      const across2 = (widthM + m.penaltyWidth) / 2
+      result.push(rectOutlinePx(along1, across1, along2, across2, toPx))
 
-      const penDepth = MARKINGS.penaltyDepth
-      const penWidth = MARKINGS.penaltyWidth
-      const gaDepth = MARKINGS.goalAreaDepth
-      const gaWidth = MARKINGS.goalAreaWidth
-
-      const penX1 = (W - penWidth) / 2
-      const gaX1 = (W - gaWidth) / 2
-
-      // Penalty area
-      result.push({
-        points: [
-          mx(penX1), my(goalY),
-          mx(penX1), my(goalY + dir * penDepth),
-          mx(penX1 + penWidth), my(goalY + dir * penDepth),
-          mx(penX1 + penWidth), my(goalY),
-        ],
-      })
-
-      // Goal area
-      result.push({
-        points: [
-          mx(gaX1), my(goalY),
-          mx(gaX1), my(goalY + dir * gaDepth),
-          mx(gaX1 + gaWidth), my(goalY + dir * gaDepth),
-          mx(gaX1 + gaWidth), my(goalY),
-        ],
-      })
+      const gaAlong1 = side === 'left' ? 0 : lengthM - m.goalAreaDepth
+      const gaAlong2 = side === 'left' ? m.goalAreaDepth : lengthM
+      const gaAcross1 = (widthM - m.goalAreaWidth) / 2
+      const gaAcross2 = (widthM + m.goalAreaWidth) / 2
+      result.push(rectOutlinePx(gaAlong1, gaAcross1, gaAlong2, gaAcross2, toPx))
     }
 
     return result
-  }, [field, width, height, isHalf])
+  }, [isCustom, isHalf, lengthM, widthM, m, toPx, width, height])
 
-  const centerCircle = !isHalf ? (
-    <Circle
-      x={width / 2}
-      y={height / 2}
-      radius={metersToPx(MARKINGS.centerCircleRadius, field.widthM, width)}
-      stroke="rgba(255,255,255,0.85)"
-      strokeWidth={2}
-    />
-  ) : null
+  const centerMarkings = useMemo(() => {
+    if (isCustom || isHalf) return null
+    const [cx, cy] = toPx(lengthM / 2, widthM / 2)
+    const radius = spanLength(m.centerCircleRadius)
+    return (
+      <>
+        <Circle x={cx} y={cy} radius={radius} stroke={LINE_COLOR} strokeWidth={LINE_WIDTH} />
+        <Circle x={cx} y={cy} radius={3} fill={LINE_COLOR} />
+      </>
+    )
+  }, [isCustom, isHalf, lengthM, widthM, m.centerCircleRadius, toPx, spanLength])
 
   const penaltySpots = useMemo(() => {
-    const spots: Array<{ x: number; y: number }> = []
-    const W = field.widthM
-    const H = field.heightM
+    if (isCustom) return []
+    const sides: Array<'left' | 'right'> = isHalf ? ['right'] : ['left', 'right']
+    return sides.map((side) => {
+      const x = side === 'left' ? m.penaltySpot : lengthM - m.penaltySpot
+      const [px, py] = toPx(x, widthM / 2)
+      return <Circle key={`spot-${side}`} x={px} y={py} radius={3} fill={LINE_COLOR} />
+    })
+  }, [isCustom, isHalf, lengthM, widthM, m.penaltySpot, toPx])
 
-    if (isHalf) {
-      spots.push({ x: W / 2, y: H - MARKINGS.penaltySpot })
-    } else {
-      spots.push({ x: W / 2, y: MARKINGS.penaltySpot })
-      spots.push({ x: W / 2, y: H - MARKINGS.penaltySpot })
-    }
+  const penaltyArcs = useMemo(() => {
+    if (isCustom) return []
+    const sides: Array<'left' | 'right'> = isHalf ? ['right'] : ['left', 'right']
+    return sides.map((side) => {
+      const x = side === 'left' ? m.penaltySpot : lengthM - m.penaltySpot
+      return penaltyArc(side, x, widthM / 2, m.penaltyDepth, m.centerCircleRadius, lengthM, toPx, spanLength)
+    })
+  }, [isCustom, isHalf, lengthM, widthM, m, toPx, spanLength])
 
-    return spots.map((s, i) => (
-      <Circle
-        key={i}
-        x={(s.x / W) * width}
-        y={(s.y / H) * height}
-        radius={3}
-        fill="rgba(255,255,255,0.85)"
-      />
-    ))
-  }, [field, width, height, isHalf])
+  const cornerArcs = useMemo(() => {
+    if (isCustom) return []
+    const corners: Array<[number, number]> = isHalf
+      ? [
+          [lengthM, 0],
+          [lengthM, widthM],
+        ]
+      : [
+          [0, 0],
+          [lengthM, 0],
+          [lengthM, widthM],
+          [0, widthM],
+        ]
+    return corners.map(([x, y]) => cornerArc(x, y, m.cornerArcRadius, toPx, spanLength))
+  }, [isCustom, isHalf, lengthM, widthM, m.cornerArcRadius, toPx, spanLength])
 
   const goals = useMemo(() => {
-    const W = field.widthM
-    const H = field.heightM
-    const gw = MARKINGS.goalWidth
-    const goalDepth = 2
-    const items: ReactElement[] = []
-
-    const drawGoal = (side: 'top' | 'bottom') => {
-      const y = side === 'top' ? 0 : H - goalDepth
-      items.push(
+    if (isCustom) return []
+    const sides: Array<'left' | 'right'> = isHalf ? ['right'] : ['left', 'right']
+    return sides.map((side) => {
+      const x = side === 'left' ? -m.goalDepth * 0.25 : lengthM - m.goalDepth * 0.75
+      const y = (widthM - m.goalWidth) / 2
+      const [px, py] = toPx(x, y)
+      return (
         <Rect
           key={`goal-${side}`}
-          x={((W - gw) / 2 / W) * width}
-          y={(y / H) * height}
-          width={(gw / W) * width}
-          height={(goalDepth / H) * height}
-          stroke="rgba(255,255,255,0.95)"
+          x={px}
+          y={py}
+          width={spanLength(m.goalDepth)}
+          height={spanWidth(m.goalWidth)}
+          stroke={LINE_COLOR}
           strokeWidth={3}
-          fill="rgba(255,255,255,0.15)"
-        />,
+          fill="rgba(255,255,255,0.12)"
+        />
       )
-    }
+    })
+  }, [isCustom, isHalf, lengthM, widthM, m, toPx, spanLength, spanWidth])
 
-    if (isHalf) {
-      drawGoal('bottom')
-    } else {
-      drawGoal('top')
-      drawGoal('bottom')
-    }
-
-    return items
-  }, [field, width, height, isHalf])
+  // Mowing stripes along pitch length (vertical bands = same x-axis as length)
+  const stripes = useMemo(() => {
+    const bandWidth = width / STRIPE_COUNT
+    return Array.from({ length: STRIPE_COUNT }).map((_, i) => (
+      <Rect
+        key={`stripe-${i}`}
+        x={bandWidth * i}
+        y={0}
+        width={bandWidth}
+        height={height}
+        fill={i % 2 === 0 ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.03)'}
+        listening={false}
+      />
+    ))
+  }, [width, height])
 
   return (
     <Group>
-      <Rect x={0} y={0} width={width} height={height} fill="#2d8a4e" />
-      {lines.map((line, i) => (
+      <Rect x={0} y={0} width={width} height={height} fill="#2d8a4e" listening={false} />
+      {stripes}
+      {lines.map((points, i) => (
         <Line
           key={i}
-          points={line.points}
-          stroke="rgba(255,255,255,0.85)"
-          strokeWidth={2}
-          closed={line.points.length === 10}
-          dash={line.dash}
-        />
-      ))}
-      {centerCircle}
-      {penaltySpots}
-      {goals}
-      {/* Stripes for grass effect */}
-      {Array.from({ length: 10 }).map((_, i) => (
-        <Rect
-          key={`stripe-${i}`}
-          x={0}
-          y={(height / 10) * i}
-          width={width}
-          height={height / 10}
-          fill={i % 2 === 0 ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.03)'}
+          points={points}
+          stroke={LINE_COLOR}
+          strokeWidth={LINE_WIDTH}
+          closed={points.length === 10}
           listening={false}
         />
       ))}
+      {centerMarkings}
+      {penaltySpots}
+      {penaltyArcs}
+      {cornerArcs}
+      {goals}
     </Group>
   )
 }

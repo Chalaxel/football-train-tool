@@ -1,5 +1,8 @@
+import { forwardRef } from 'react'
 import { Circle, Group, RegularPolygon, Rect, Text, Arrow } from 'react-konva'
+import type Konva from 'konva'
 import type { FieldElement } from '../types'
+import { teamGoalkeeperColor, teamPlayerColor } from '../utils/teamColors'
 
 interface DraggableElementProps {
   element: FieldElement
@@ -8,6 +11,8 @@ interface DraggableElementProps {
   selected: boolean
   readonly: boolean
   onSelect: (id: string) => void
+  onDragStart?: (id: string) => void
+  onDragMove?: (id: string, e: Konva.KonvaEventObject<DragEvent>) => void
   onDragEnd: (id: string, x: number, y: number) => void
 }
 
@@ -19,15 +24,10 @@ function pxY(y: number, h: number) {
   return y * h
 }
 
-export function DraggableElement({
-  element,
-  fieldWidth,
-  fieldHeight,
-  selected,
-  readonly,
-  onSelect,
-  onDragEnd,
-}: DraggableElementProps) {
+export const DraggableElement = forwardRef<Konva.Group, DraggableElementProps>(function DraggableElement(
+  { element, fieldWidth, fieldHeight, selected, readonly, onSelect, onDragStart, onDragMove, onDragEnd },
+  ref,
+) {
   const x = pxX(element.x, fieldWidth)
   const y = pxY(element.y, fieldHeight)
 
@@ -38,28 +38,25 @@ export function DraggableElement({
   }
 
   const selectionRing = selected ? (
-    <Circle
-      x={0}
-      y={0}
-      radius={22}
-      stroke="#fbbf24"
-      strokeWidth={2}
-      dash={[4, 4]}
-    />
+    <Circle x={0} y={0} radius={22} stroke="#fbbf24" strokeWidth={2} dash={[4, 4]} />
   ) : null
 
   const commonProps = {
+    ref,
     draggable: !readonly,
     onClick: () => onSelect(element.id),
     onTap: () => onSelect(element.id),
+    onDragStart: onDragStart ? () => onDragStart(element.id) : undefined,
+    onDragMove: onDragMove ? (e: Konva.KonvaEventObject<DragEvent>) => onDragMove(element.id, e) : undefined,
     onDragEnd: handleDragEnd,
     x,
     y,
+    rotation: element.type === 'arrow' ? element.rotation : 0,
   }
 
   switch (element.type) {
     case 'player': {
-      const color = element.team === 'away' ? '#ef4444' : '#3b82f6'
+      const color = teamPlayerColor(element.team ?? 'home')
       return (
         <Group {...commonProps}>
           {selectionRing}
@@ -79,7 +76,7 @@ export function DraggableElement({
       )
     }
     case 'goalkeeper': {
-      const color = element.team === 'away' ? '#b91c1c' : '#1d4ed8'
+      const color = teamGoalkeeperColor(element.team ?? 'home')
       return (
         <Group {...commonProps}>
           {selectionRing}
@@ -112,25 +109,14 @@ export function DraggableElement({
       )
     case 'miniGoal':
       return (
-        <Group {...commonProps} offsetX={0} offsetY={0}>
+        <Group {...commonProps}>
           {selectionRing}
-          <Rect
-            x={-20}
-            y={-12}
-            width={40}
-            height={24}
-            stroke="#fff"
-            strokeWidth={3}
-            cornerRadius={2}
-          />
+          <Rect x={-20} y={-12} width={40} height={24} stroke="#fff" strokeWidth={3} cornerRadius={2} />
         </Group>
       )
     case 'arrow':
       return (
-        <Group
-          {...commonProps}
-          rotation={element.rotation}
-        >
+        <Group {...commonProps}>
           {selectionRing}
           <Arrow
             points={[0, 0, 50, 0]}
@@ -145,4 +131,4 @@ export function DraggableElement({
     default:
       return null
   }
-}
+})

@@ -4,10 +4,12 @@ Créateur de visuel de séance de football — application React déployée sur 
 
 ## Fonctionnalités
 
+- **Interface compacte** : terrain plein écran + barre d'outils horizontale (idéal iframe)
 - **Terrain 2D vue du dessus** avec marquages (surface, surface de réparation, cercle central…)
 - **Dimensions** : terrain complet (105×68 m), demi-terrain (52,5×68 m) ou personnalisé
 - **Éléments** : joueurs, gardiens, ballons, plots, mini-buts, flèches
 - **Glisser-déposer** pour repositionner les éléments
+- **Rotation des flèches** : poignée visuelle, boutons ±45°, raccourci R
 - **Export PNG** haute résolution
 - **Intégration iframe** pour applications tierces
 
@@ -46,7 +48,7 @@ L'application répond aux messages suivants (source : `football-train-tool`) :
 | `{ type: 'ftt:export' }` | Retourne un PNG en data URL |
 
 Paramètres URL :
-- `?embed=1` — mode compact sans en-tête
+- `?embed=1` — alias historique (UI identique au mode standalone)
 - `?readonly=1` — lecture seule
 
 ## Déploiement

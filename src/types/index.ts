@@ -8,7 +8,7 @@ export type ElementType =
   | 'miniGoal'
   | 'arrow'
 
-export type Team = 'home' | 'away'
+export type Team = 'home' | 'away' | 'yellow' | 'black'
 
 export interface FieldConfig {
   preset: FieldPreset
@@ -19,9 +19,9 @@ export interface FieldConfig {
 export interface FieldElement {
   id: string
   type: ElementType
-  /** Normalized X (0–1) relative to field width */
+  /** Normalized X (0–1) along pitch length (canvas width) */
   x: number
-  /** Normalized Y (0–1) relative to field height */
+  /** Normalized Y (0–1) across pitch width (canvas height) */
   y: number
   rotation: number
   team?: Team
