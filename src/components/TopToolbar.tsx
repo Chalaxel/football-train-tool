@@ -134,9 +134,14 @@ function MenuTrigger({
 }) {
   return (
     <DropdownMenu.Trigger asChild disabled={disabled}>
-      <button type="button" className={`toolbar-menu-trigger ${active ? 'active' : ''}`} disabled={disabled}>
+      <button
+        type="button"
+        className={`toolbar-menu-trigger ${active ? 'active' : ''}`}
+        disabled={disabled}
+        aria-label={label}
+      >
         {icon}
-        <span>{label}</span>
+        <span className="toolbar-menu-label">{label}</span>
         <ChevronDown size={14} className="toolbar-chevron" />
       </button>
     </DropdownMenu.Trigger>
